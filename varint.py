@@ -53,11 +53,11 @@ class VarInt:
 			offset += 7
 
 	@classmethod
-	def decode(cls, buffer: bytes) -> int:
+	def from_bytes(cls, buffer: bytes) -> int:
 		return cls.read_from(bytearray(buffer))
 
 	@classmethod
-	def encode(cls, value: int) -> bytes:
+	def to_bytes(cls, value: int) -> bytes:
 		buffer = bytearray()
 		cls.write_to(value, buffer)
 		return bytes(buffer)
