@@ -1,4 +1,6 @@
 
+from asyncraft.streams import IStreamWriter, IStreamReader
+
 class VarIntTooBigError(ValueError):
 	pass
 
@@ -6,7 +8,7 @@ class VarInt:
 	SIZE: int = 4
 
 	@classmethod
-	def read_from(cls, buffer: bytearray) -> int:
+	async def read_from(cls, stream: IStreamReader) -> int:
 		value = 0
 		offset = 0
 
@@ -14,7 +16,7 @@ class VarInt:
 			if offset >= cls.SIZE * 8:
 				raise VarIntTooBigError()
 
-			byte = buffer.pop(0)
+			byte = await stream.read_exactly(1)
 			value |= (byte & 0x7F) << offset
 
 			offset += 7
@@ -29,8 +31,7 @@ class VarInt:
 		return value
 
 	@classmethod
-	def write_to(cls, value: int, buffer: bytearray) -> bytes:
-		print(cls)
+	def write_to(cls, value: int, stream: IStreamWriter) -> bytes:
 		max_value = 2 ** (cls.SIZE * 8 - 1)
 		if value >= max_value:
 			raise VarIntTooBigError()
@@ -42,25 +43,19 @@ class VarInt:
 		bit_mask = 2 ** (cls.SIZE * 8) - 1
 		value &= bit_mask
 
+		buffer = bytearray()
+
 		offset = 0
 		while True:
 			if value <= 0x7F:
 				buffer.append(value)
-				return
+				break
 
 			buffer.append(value & 0x7F | 0x80)
 			value >>= 7
 			offset += 7
 
-	@classmethod
-	def from_bytes(cls, buffer: bytes) -> int:
-		return cls.read_from(bytearray(buffer))
-
-	@classmethod
-	def to_bytes(cls, value: int) -> bytes:
-		buffer = bytearray()
-		cls.write_to(value, buffer)
-		return bytes(buffer)
+		stream.write(bytes(buffer))
 
 class VarLong(VarInt):
 	SIZE: int = 8

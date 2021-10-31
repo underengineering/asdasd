@@ -5,15 +5,22 @@ from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 from enum import IntEnum
 
-from ..varint import VarInt, VarLong
-from ..utils import unsigned_to_signed
+from asyncraft.varint import VarInt, VarLong
+from asyncraft.streams import IStreamWriter, IStreamReader, ByteArrayStreamWriter
+from asyncraft.utils import unsigned_to_signed
 
 __all__ = (
 	"Bool", "Byte", "UByte",
 	"Short", "UShort", "Int",
 	"UInt", "Long", "ULong",
-	"String"
+	"Float", "Double", "String",
+	"VarIntField", "VarLongField",
+	"Position", "Angle", "ChatColor",
+	"ChatComponent", "ChatString", "InvalidIdentifierError",
+	"Identifier"
 )
+
+# pylint: disable=abstract-method,bad-staticmethod-argument
 
 class PacketField:
 	def __init__(self, *args, **kwargs):
@@ -25,35 +32,44 @@ class PacketField:
 	def getter(self) -> Any:
 		raise NotImplementedError()
 
-	def read_from(self, buffer: bytearray) -> None:
+	@staticmethod
+	async def _read_from_impl(self, stream: IStreamReader) -> Any:
 		raise NotImplementedError()
 
-	def write_to(self, buffer: bytearray) -> None:
-		buffer.extend(self.to_bytes())
+	@classmethod
+	async def read_from(cls, stream: IStreamReader) -> Any:
+		""" Creates field from stream
+		"""
+
+		field = cls.__new__(cls)
+		await cls._read_from_impl(field, stream)
+		return field
+
+	def write_to(self, stream: IStreamWriter) -> None:
+		raise NotImplementedError
 
 	def to_bytes(self) -> bytes:
-		raise NotImplementedError()
+		buffer = bytearray()
+		stream = ByteArrayStreamWriter(buffer)
+		self.write_to(stream)
+
+		return bytes(buffer)
 
 def _auto_pack(fmt: str):
 	# All data sent over the network (except for VarInt and VarLong) is big-endian
 	fmt = "!" + fmt
 
 	def decorator(cls):
-		def custom_read_from(self, buffer: bytearray) -> None:
+		async def custom_read_from_impl(self, stream: IStreamReader) -> Any:
 			size = struct.calcsize(fmt)
-			self.value = struct.unpack_from(fmt, buffer, 0)[0]
-			del buffer[:size]
+			self.value = struct.unpack(fmt, await stream.read_exactly(size))[0]
 
-		def custom_write_to(self, buffer: bytearray) -> None:
+		def custom_write_to(self, stream: IStreamWriter) -> None:
 			data = struct.pack(fmt, self.value)
-			buffer.extend(data)
+			stream.write(data)
 
-		def custom_to_bytes(self) -> None:
-			return struct.pack(fmt, self.value)
-
-		setattr(cls, "read_from", custom_read_from)
+		setattr(cls, "_read_from_impl", custom_read_from_impl)
 		setattr(cls, "write_to", custom_write_to)
-		setattr(cls, "to_bytes", custom_to_bytes)
 
 		return cls
 
@@ -70,8 +86,6 @@ def _auto_getset(cls):
 	setattr(cls, "getter", custom_getter)
 
 	return cls
-
-# pylint: disable=abstract-method
 
 @dataclass(slots = True)
 @_auto_pack("?")
@@ -140,65 +154,60 @@ class Double(PacketField):
 	value: float = 0
 
 @dataclass(init = False, slots = True)
+@_auto_getset
 class String(PacketField):
-	length: int = 0
-	_text: str = ""
+	value: str = ""
 
 	# pylint: disable=super-init-not-called
 	def __init__(self, text: str):
-		self.length = len(text)
-		self.text = text
+		self.value = text
 
-	# pylint: disable=arguments-differ
-	def setter(self, value: str) -> None:
-		self.length = len(value.encode("utf-8"))
-		self._text = value
+	@staticmethod
+	async def _read_from_impl(self, stream: IStreamReader) -> None:
+		length = await VarInt.read_from(stream)
+		self.value = (await stream.read_exactly(length)).decode("utf-8")
 
-	def getter(self) -> str:
-		return self._text
-
-	@property
-	def text(self) -> str:
-		return self._text
-
-	@text.setter
-	def text(self, text: str) -> None:
-		self.length = len(text.encode("utf-8"))
-		self._text = text
-
-	def from_bytes(self, buffer: bytearray) -> None:
-		self.length = VarInt.read_from(buffer)
-		self._text = buffer[:self.length]
-		del buffer[:self.length]
-
-	def write_to(self, buffer: bytearray) -> None:
-		VarInt.write_to(self.length, buffer)
-		buffer.extend(self._text.encode("utf-8"))
-
-	def to_bytes(self):
-		return VarInt.encode(self.length) + self._text.encode("utf-8")
+	def write_to(self, stream: IStreamWriter) -> None:
+		length = len(self.value.encode("utf-8"))
+		VarInt.write_to(length, stream)
+		stream.write(self.value.encode("utf-8"))
 
 @dataclass(slots = True)
 @_auto_getset
-class VarIntField(PacketField, VarInt):
+class VarIntField(PacketField):
 	value: int = 0
 
-	def from_bytes(self, buffer: bytearray):
-		self.value = super(__class__, VarInt).read_from(buffer)
+	@staticmethod
+	async def _read_from_impl(self, stream: IStreamReader) -> Any:
+		self.value = await VarInt.read_from(stream)
 
-	def to_bytes(self):
-		return super(__class__, VarInt).to_bytes(self.value)
+	def write_to(self, stream: IStreamWriter) -> None:
+		VarInt.write_to(self.value, stream)
 
 @dataclass(slots = True)
 @_auto_getset
-class VarLongField(PacketField, VarLong):
+class VarLongField(PacketField):
 	value: int = 0
 
-	def from_bytes(self, buffer: bytearray) -> None:
-		self.value = super(__class__, VarLong).read_from(buffer)
+	@staticmethod
+	async def _read_from_impl(self, stream: IStreamReader) -> Any:
+		self.value = await VarLong.read_from(stream)
 
-	def to_bytes(self) -> bytes:
-		return super(__class__, VarLong).to_bytes(self.value)
+	def write_to(self, stream: IStreamWriter) -> None:
+		VarLong.write_to(self.value, stream)
+
+@dataclass(slots = True)
+@_auto_getset
+class VarByteArray(PacketField):
+	value: bytearray
+
+	@staticmethod
+	async def _read_from_impl(self, stream: IStreamReader) -> Any:
+		length = await VarInt.read_from(stream)
+		self.value = await stream.read_exactly(length)
+
+	def write_to(self, stream: IStreamWriter) -> None:
+		VarInt.write_to(self.value, stream)
 
 @dataclass(slots = True)
 class Position(PacketField):
@@ -212,26 +221,21 @@ class Position(PacketField):
 	def getter(self):
 		return self
 
-	def from_bytes(self, buffer: bytearray):
-		xyz = struct.unpack_from("!Q", buffer)
+	@staticmethod
+	async def _read_from_impl(self, stream: IStreamReader) -> Any:
+		xyz = struct.unpack_from("!Q", await stream.read_exactly(8))
 
-		self.x = unsigned_to_signed(xyz >> 38)
-		self.y = unsigned_to_signed(xyz & 0xFFF)
-		self.z = unsigned_to_signed(xyz << 26 >> 38)
+		self.x = unsigned_to_signed(xyz >> 38, 26)
+		self.y = unsigned_to_signed(xyz & 0xFFF, 12)
+		self.z = unsigned_to_signed(xyz << 26 >> 38, 26)
 
-	def write_to(self, buffer: bytearray) -> None:
+	def write_to(self, stream: IStreamWriter) -> None:
 		long = (self.x & 0x3FFFFFF) << 38	|	\
 				(self.z & 0x3FFFFFF) << 12	|	\
 				(self.y & 0xFFF)
 
-		return struct.pack_into("!q", buffer, long)
-
-	def to_bytes(self) -> bytes:
-		long = (self.x & 0x3FFFFFF) << 38	|	\
-				(self.z & 0x3FFFFFF) << 12	|	\
-				(self.y & 0xFFF)
-
-		return struct.pack("!q", long)
+		data = struct.pack("!q", long)
+		stream.write(data)
 
 Angle = Byte
 
@@ -253,7 +257,7 @@ class ChatColor(IntEnum):
 	YELLOW = 0xE
 	WHITE = 0xF
 
-	def to_str(self):
+	def to_str(self) -> str:
 		return "§" + hex(self.value)[3]
 
 class ChatComponent:
@@ -263,7 +267,7 @@ class ChatComponent:
 		self._body: Dict[str, ChatComponent] = {}
 
 	@staticmethod
-	def bool_to_string(b):
+	def bool_to_string(b) -> str:
 		return "true" if b else "false"
 
 	def set_text(self, text: str) -> None:
@@ -287,7 +291,7 @@ class ChatComponent:
 	def set_color(self, color: ChatColor) -> None:
 		self._body["color"] = color.to_str()
 
-	def add_component(self, component):
+	def add_component(self, component) -> None:
 		if "extra" not in self._body:
 			self._body["extra"] = []
 
@@ -303,32 +307,53 @@ class ChatComponent:
 		return self.to_json()
 
 @dataclass(slots = True)
-class ChatString:
+class ChatString(PacketField):
 	root_component: ChatComponent = ChatComponent()
 
-	def setter(self, component: ChatComponent) -> None:
-		self.root_component = component
+	def setter(self, value: ChatComponent) -> None:
+		self.root_component = value
 
-	def getter(self):
+	def getter(self) -> ChatComponent:
 		return self.root_component
+
+	# TODO
+	@staticmethod
+	async def _read_from_impl(self, stream: IStreamReader) -> Any:
+		raise NotImplementedError()
+
+	def write_to(self, stream: IStreamWriter) -> None:
+		json_data = self.root_component.to_json().encode("utf-8")
+		VarInt.write_to(len(json_data), stream)
+		stream.write(json_data)
 
 class InvalidIdentifierError(ValueError):
 	pass
 
-class Identifier:
+@_auto_getset
+class Identifier(PacketField):
 	__slots__ = ("_value",)
 
+	# pylint: disable=super-init-not-called
 	def __init__(self) -> None:
 		self._value = ""
 
 	@property
-	def value(self):
+	def value(self) -> str:
 		return self._value
 
 	@value.setter
-	def value(self, identifier):
+	def value(self, identifier) -> None:
 		valid_chars = "01​​234​5​6​78​9abcdefghijklmnopqrstuvwxyz-_"
 		if any([char not in valid_chars for char in identifier]):
 			raise InvalidIdentifierError()
 
 		self._value = identifier
+
+	@staticmethod
+	async def _read_from_impl(self, stream: IStreamReader) -> Any:
+		length = await VarInt.read_from(stream)
+		self._value = await stream.read_exactly(length)
+
+	def write_to(self, stream: IStreamWriter) -> None:
+		VarInt.write_to(len(self.value), stream)
+		stream.write(self.value.encode("utf-8"))
