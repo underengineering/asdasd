@@ -153,14 +153,10 @@ class Float(PacketField):
 class Double(PacketField):
 	value: float = 0
 
-@dataclass(init = False, slots = True)
+@dataclass(slots = True)
 @_auto_getset
 class String(PacketField):
 	value: str = ""
-
-	# pylint: disable=super-init-not-called
-	def __init__(self, text: str):
-		self.value = text
 
 	@staticmethod
 	async def _read_from_impl(self, stream: IStreamReader) -> None:

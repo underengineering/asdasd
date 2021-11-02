@@ -16,7 +16,7 @@ class VarInt:
 			if offset >= cls.SIZE * 8:
 				raise VarIntTooBigError()
 
-			byte = await stream.read_exactly(1)
+			byte = (await stream.read_exactly(1))[0]
 			value |= (byte & 0x7F) << offset
 
 			offset += 7

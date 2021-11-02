@@ -1,15 +1,16 @@
 
 import os
 import re
-from typing import List, Tuple
-from enum import IntEnum
+from typing import List
 from dataclasses import dataclass
 
 from asyncraft.utils import Version
+from asyncraft.proto.utils import ProtocolState, PacketDirection
 
+# pylint: disable=pointless-string-statement
 """
-	Set packet direction: > (direction SERVERBOUND/CLIENTBOUND)
 	Set packet state: $ (state)
+	Set packet direction: > (direction SERVERBOUND/CLIENTBOUND)
 	Set packet id: = (packet name) (id)
 	Comment: # (comment)
 """
@@ -32,25 +33,15 @@ class PacketParserError(ValueError):
 
 		super().__init__(message)
 
-class PacketDirection(IntEnum):
-	SERVERBOUND = 0
-	CLIENTBOUND = 1
-
-class PacketState(IntEnum):
-	HANDSHAKING = 0
-	STATUS = 1
-	LOGIN = 2
-	PLAY = 3
-
 @dataclass
 class PacketInfo:
 	direction: PacketDirection
-	state: PacketState
+	state: ProtocolState
 	name: str
 	id: int
 
 class PacketParser:
-	DIR = "packets"
+	DIR = "packets/versions"
 
 	def __init__(self, version: Version):
 		abs_path = os.path.dirname(__file__)
@@ -60,13 +51,13 @@ class PacketParser:
 
 		self._offset = 0
 
-		self._current_state: PacketState = None
+		self._current_state: ProtocolState = None
 		self._current_direction: PacketDirection = None
 		self._packets: List[PacketInfo] = []
 
-	def _add_packet(self, packet_name: str, id: int) -> None: # pylint: disable=redefined-builtin
+	def _add_packet(self, packet_name: str, packet_id: int) -> None:
 		self._packets.append(
-			PacketInfo(self._current_direction, self._current_state, packet_name, id))
+			PacketInfo(self._current_direction, self._current_state, packet_name, packet_id))
 
 	def _peek(self, pattern: str, flags: re.RegexFlag = 0) -> re.Match:
 		match = re.match(pattern, self._data[self._offset:], flags)
@@ -111,23 +102,23 @@ class PacketParser:
 		self._skip_whitespaces()
 
 		match cmd:
+			case "$":
+				state = self._expect_match(r"[A-Z]+").group(0)
+				self._current_state = ProtocolState[state]
 			case ">":
 				direction = self._expect_match(r"[A-Z]+").group(0)
 				self._current_direction = PacketDirection[direction]
-			case "$":
-				state = self._expect_match(r"[A-Z]+").group(0)
-				self._current_state = PacketState[state]
 			case "=":
 				packet_name = self._parse_packet_name()
 				self._skip_whitespaces()
-				packet_id = self._expect_match(r"\d+").group(0)
+				packet_id = int(self._expect_match(r"\d+").group(0))
 				self._add_packet(packet_name, packet_id)
 			case "#":
 				self._parse_comment()
 
 		self._skip_newlines()
 
-	def parse(self) -> None:
+	def parse(self) -> List[PacketInfo]:
 		self._skip_newlines()
 
 		while not self._is_eof():
