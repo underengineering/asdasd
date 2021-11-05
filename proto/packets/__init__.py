@@ -23,11 +23,12 @@ _packet_types = {
 	}
 }
 
-def initialize_for(version: Version):
+def initialize_for(version: Version) -> None:
 	""" Initializes packet ids
 	"""
 
-	import asyncraft.proto.packets as packets
+	# pylint: disable=import-outside-toplevel
+	from asyncraft.proto import packets
 
 	logging.info("Initializing asyncraft for version %s", version)
 

@@ -25,7 +25,7 @@ __all__ = (
 FieldUnderlyingType = TypeVar("FieldUnderlyingType")
 PacketFieldT = TypeVar("PacketFieldT", bound = "PacketField")
 class PacketField:
-	def __init__(self, *args, **kwargs):
+	def __init__(self, *args, **kwargs) -> None:
 		raise NotImplementedError()
 
 	def setter(self, value: FieldUnderlyingType) -> None:
