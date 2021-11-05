@@ -1,6 +1,6 @@
 
 import dataclasses
-from typing import Any, Type
+from typing import Any, Type, TypeVar, overload
 
 from asyncraft.proto.utils import PacketDirection, ProtocolState
 from asyncraft.proto.fields import PacketField
@@ -8,19 +8,21 @@ from asyncraft.streams import IStreamReader, IStreamWriter, ByteArrayStreamWrite
 from asyncraft.varint import VarInt
 
 __all__ = (
-	"Packet", "packet"
+	"Packet", "decorate_packet_type"
 )
 
+PacketT = TypeVar("PacketT", bound = "Packet")
 class Packet:
 	ID: int
 	state: ProtocolState
 	direction: PacketDirection
 
-	def get_field(self, name: str) -> PacketField:
-		return 0 # Calm down pylance
+	@overload
+	def get_field(self, name: str, default: Any = None) -> PacketField:
+		...
 
 	@classmethod
-	async def read_from(cls, stream: IStreamReader) -> Any:
+	async def read_from(cls: Type[PacketT], stream: IStreamReader) -> PacketT:
 		""" Creates packet from stream
 		"""
 
@@ -57,47 +59,56 @@ class Packet:
 
 		return bytes(buffer)
 
-def _create_fields(cls: Type[Packet]):
-	for field_name, field_type in cls.__annotations__.items():
-		if not issubclass(field_type, PacketField):
-			raise ValueError(f"Field {field_name} must inherit from PacketField")
+	def __new__(cls: Type[PacketT], *args, **kwargs) -> PacketT: # pylint: disable=unused-argument
+		decorate_packet_type(cls)
+		return super(Packet, cls).__new__(cls)
 
-		def create_property(field_name, field_type):
-			original_field_name = "__" + field_name
-			def fget(self) -> Any:
-				field: PacketField = getattr(self, original_field_name)
+def _create_descriptors(cls: Type[Packet]) -> None:
+	for field in dataclasses.fields(cls):
+		if not issubclass(field.type, PacketField):
+			raise ValueError(f"Field {field.name!r} must inherit from PacketField")
+
+		def create_descriptor(descriptor_name: str,
+								field_name: str,
+								field_type: Type[PacketField]) -> None:
+			def getter(self: Packet) -> Any:
+				field: PacketField = self.get_field(descriptor_name)
 				return field.getter()
 
-			def fset(self, value: Any) -> None:
-				field: PacketField = getattr(self, original_field_name, None)
+			def setter(self: Packet, value: Any) -> None:
+				field: PacketField = self.get_field(descriptor_name)
 				if field is None:
 					field = field_type()
-					setattr(self, original_field_name, field)
+					setattr(self, field_name, field)
 
 				field.setter(value)
 
-			prop = property(fget = fget, fset = fset)
-			setattr(cls, field_name, prop)
+			prop = property(fget = getter, fset = setter)
+			setattr(cls, descriptor_name, prop)
 
-		create_property(field_name, field_type)
+		create_descriptor(field.name, "__" + field.name, field.type)
 
-	# TODO: better method to get real fields?
-	def get_field_method(self, name: str):
-		return getattr(self, "__" + name)
+	# TODO: better method to get real fields
+	def get_field_method(self, name: str, default: Any = None) -> PacketField:
+		return getattr(self, "__" + name, default)
 
 	setattr(cls, "get_field", get_field_method)
 
-def packet(cls: Type[Packet] = None, init = True):
-	""" Decorate packets with this
+def decorate_packet_type(cls: Type[Packet] = None, /) -> Type[Packet]:
+	""" Add descriptors to packet fields
 	"""
 
 	if cls is None:
-		def decorator(cls):
-			return packet(cls, init = init)
+		def decorator(cls: Type[Packet]) -> Type[Packet]:
+			return decorate_packet_type(cls)
 
 		return decorator
 
-	cls = dataclasses.dataclass(cls)
-	_create_fields(cls)
+	if hasattr(cls, "__decorated"):
+		return
+
+	setattr(cls, "__decorated", True)
+
+	_create_descriptors(cls)
 
 	return cls
