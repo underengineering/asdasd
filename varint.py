@@ -8,6 +8,23 @@ class VarInt:
 	SIZE: int = 4
 
 	@classmethod
+	async def count_from(cls, stream: IStreamReader) -> int:
+		offset = 0
+
+		while True:
+			if offset >= cls.SIZE * 8:
+				raise VarIntTooBigError()
+
+			byte = (await stream.read_exactly(1))[0]
+
+			offset += 7
+
+			if byte & 0x80 == 0:
+				break
+
+		return offset // 7
+
+	@classmethod
 	async def read_from(cls, stream: IStreamReader) -> int:
 		value = 0
 		offset = 0

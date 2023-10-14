@@ -34,17 +34,16 @@ class PacketField:
 	def getter(self) -> FieldUnderlyingType:
 		raise NotImplementedError()
 
-	@staticmethod
-	async def _read_from_impl(self: PacketFieldT, stream: IStreamReader) -> None:
+	async def read_from(self: PacketFieldT, stream: IStreamReader) -> None:
 		raise NotImplementedError()
 
 	@classmethod
-	async def read_from(cls, stream: IStreamReader) -> PacketFieldT:
+	async def create_from(cls, stream: IStreamReader) -> PacketFieldT:
 		""" Creates field from stream
 		"""
 
 		field = cls.__new__(cls)
-		await cls._read_from_impl(field, stream)
+		await cls.read_from(field, stream)
 		return field
 
 	def write_to(self, stream: IStreamWriter) -> None:
@@ -62,7 +61,7 @@ def _auto_pack(fmt: str):
 	fmt = "!" + fmt
 
 	def decorator(cls) -> Type[PacketField]:
-		async def custom_read_from_impl(self, stream: IStreamReader) -> None:
+		async def custom_read_from(self, stream: IStreamReader) -> None:
 			size = struct.calcsize(fmt)
 			self.value = struct.unpack(fmt, await stream.read_exactly(size))[0]
 
@@ -70,7 +69,7 @@ def _auto_pack(fmt: str):
 			data = struct.pack(fmt, self.value)
 			stream.write(data)
 
-		setattr(cls, "_read_from_impl", custom_read_from_impl)
+		setattr(cls, "read_from", custom_read_from)
 		setattr(cls, "write_to", custom_write_to)
 
 		return cls
@@ -157,11 +156,15 @@ class Double(PacketField):
 
 @dataclass(slots = True)
 @_auto_getset
+class ByteArray(PacketField):
+	value: bytearray = bytearray()
+
+@dataclass(slots = True)
+@_auto_getset
 class String(PacketField):
 	value: str = ""
 
-	@staticmethod
-	async def _read_from_impl(self: PacketField, stream: IStreamReader) -> None:
+	async def read_from(self: PacketField, stream: IStreamReader) -> None:
 		length = await VarInt.read_from(stream)
 		self.value = (await stream.read_exactly(length)).decode("utf-8")
 
@@ -175,8 +178,7 @@ class String(PacketField):
 class VarIntField(PacketField):
 	value: int = 0
 
-	@staticmethod
-	async def _read_from_impl(self: PacketField, stream: IStreamReader) -> None:
+	async def read_from(self: PacketField, stream: IStreamReader) -> None:
 		self.value = await VarInt.read_from(stream)
 
 	def write_to(self, stream: IStreamWriter) -> None:
@@ -187,8 +189,7 @@ class VarIntField(PacketField):
 class VarLongField(PacketField):
 	value: int = 0
 
-	@staticmethod
-	async def _read_from_impl(self: PacketField, stream: IStreamReader) -> None:
+	async def read_from(self: PacketField, stream: IStreamReader) -> None:
 		self.value = await VarLong.read_from(stream)
 
 	def write_to(self, stream: IStreamWriter) -> None:
@@ -199,8 +200,7 @@ class VarLongField(PacketField):
 class VarByteArray(PacketField):
 	value: bytearray
 
-	@staticmethod
-	async def _read_from_impl(self: PacketField, stream: IStreamReader) -> None:
+	async def read_from(self: PacketField, stream: IStreamReader) -> None:
 		length = await VarInt.read_from(stream)
 		self.value = await stream.read_exactly(length)
 
@@ -219,8 +219,7 @@ class Position(PacketField):
 	def getter(self):
 		return self
 
-	@staticmethod
-	async def _read_from_impl(self: PacketField, stream: IStreamReader) -> None:
+	async def read_from(self: PacketField, stream: IStreamReader) -> None:
 		xyz = struct.unpack_from("!Q", await stream.read_exactly(8))
 
 		self.x = unsigned_to_signed(xyz >> 38, 26)
@@ -315,8 +314,7 @@ class ChatString(PacketField):
 		return self.root_component
 
 	# TODO
-	@staticmethod
-	async def _read_from_impl(self: PacketField, stream: IStreamReader) -> None:
+	async def read_from(self: PacketField, stream: IStreamReader) -> None:
 		raise NotImplementedError()
 
 	def write_to(self, stream: IStreamWriter) -> None:
@@ -347,8 +345,7 @@ class Identifier(PacketField):
 
 		self._value = identifier
 
-	@staticmethod
-	async def _read_from_impl(self: PacketField, stream: IStreamReader) -> None:
+	async def read_from(self: PacketField, stream: IStreamReader) -> None:
 		length = await VarInt.read_from(stream)
 		self._value = await stream.read_exactly(length)
 

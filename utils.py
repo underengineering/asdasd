@@ -1,4 +1,5 @@
 
+import re
 from dataclasses import dataclass
 
 @dataclass(slots = True)
@@ -6,13 +7,24 @@ class Version:
 	major: int
 	minor: int
 	patch: int
+	is_snapshot: bool = False
 
 	@staticmethod
 	def from_string(version: str):
+		if version.find("w") != -1:
+			match = re.match(r"(\d+)w(\d+)([a-z])", version)
+			major = match.group(1)
+			minor = match.group(2)
+			patch = match.group(3)
+			return Version(major, minor, patch)
+
 		major, minor, patch = version.split(".")
 		return Version(major, minor, patch)
 
-	def __str__(self):
+	def __str__(self) -> str:
+		if self.is_snapshot:
+			return f"{self.major}w{self.minor}{self.patch}"
+
 		return f"{self.major}.{self.minor}.{self.patch}"
 
 	def __eq__(self, other) -> bool:

@@ -109,6 +109,9 @@ class ByteArrayStreamReader(IStreamWriter):
 		raise NotImplementedError()
 
 	async def read(self, num_bytes: int = -1) -> bytes:
+		return await self.read_exactly(num_bytes)
+
+	async def read_exactly(self, num_bytes: int) -> bytes:
 		if len(self._buffer) < num_bytes:
 			raise EOFError()
 
@@ -116,9 +119,6 @@ class ByteArrayStreamReader(IStreamWriter):
 		del self._buffer[:num_bytes]
 
 		return data
-
-	async def read_exactly(self, num_bytes: int) -> bytes:
-		return await self.read(num_bytes)
 
 class ByteArrayStreamWriter(IStreamWriter):
 	def __init__(self, buffer: bytearray):
@@ -148,3 +148,7 @@ class ByteArrayStreamWriter(IStreamWriter):
 
 	def is_closing(self) -> bool:
 		return False
+
+# pylint: disable=abstract-method
+class ByteArrayStreamReaderWriter(ByteArrayStreamReader, ByteArrayStreamWriter):
+	pass
